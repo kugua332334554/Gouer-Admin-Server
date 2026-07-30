@@ -903,7 +903,28 @@ async def delete_bot_token_api(token_id: int, admin=Depends(get_current_admin)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
+            # 先查出该 Bot 的 db_name 和 pid
+            await cur.execute("SELECT db_name, pid FROM bot_tokens WHERE id=%s", (token_id,))
+            row = await cur.fetchone()
+            db_name, pid = row if row else (None, None)
+
+            # 杀掉正在运行的 Bot 进程
+            if pid:
+                try:
+                    os.kill(pid, 9)
+                except Exception:
+                    pass
+
+            # 删除 bot_tokens 记录
             await cur.execute("DELETE FROM bot_tokens WHERE id=%s", (token_id,))
+
+            # 删除对应的数据库
+            if db_name:
+                try:
+                    await cur.execute(f"DROP DATABASE IF EXISTS `{db_name}`")
+                except Exception:
+                    pass
+
     return {"ok": True}
 
 # ── Subscriptions ────────────────────────────────────────

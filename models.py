@@ -104,6 +104,7 @@ class AutodeleteUpdate(BaseModel):
     pin: Optional[bool] = None
     photo: Optional[bool] = None
     title: Optional[bool] = None
+    join_leave: Optional[bool] = None
 
 class CardSettingsUpdate(BaseModel):
     enabled: Optional[bool] = None

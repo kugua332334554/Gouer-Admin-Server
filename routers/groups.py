@@ -89,9 +89,9 @@ async def get_group_detail(chat_id: int, db: str = "", admin=Depends(get_current
             result["card"] = {"enabled": bool(row[0]) if row else False, "template": row[1] if row else "default"}
 
             # autodelete
-            await cur.execute("SELECT pin, photo, title FROM group_autodelete WHERE chat_id=%s", (chat_id,))
+            await cur.execute("SELECT pin, photo, title, join_leave FROM group_autodelete WHERE chat_id=%s", (chat_id,))
             row = await cur.fetchone()
-            result["autodelete"] = {"pin": bool(row[0]) if row else False, "photo": bool(row[1]) if row else False, "title": bool(row[2]) if row else False}
+            result["autodelete"] = {"pin": bool(row[0]) if row else False, "photo": bool(row[1]) if row else False, "title": bool(row[2]) if row else False, "join_leave": bool(row[3]) if row else False}
 
             # permission
             await cur.execute("SELECT permissions FROM group_permission WHERE chat_id=%s", (chat_id,))

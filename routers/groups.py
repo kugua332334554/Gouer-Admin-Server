@@ -1,4 +1,5 @@
 # Group detail + CRUD router
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from models import (GroupInfoUpdate, GroupVerifyUpdate, WelcomeSettingsUpdate,
     NightSettingsUpdate, AntispamUpdate, ChatAISettings, ToggleSettings,
@@ -106,6 +107,11 @@ async def get_group_detail(chat_id: int, db: str = "", admin=Depends(get_current
                 result["antispam"] = {cols[i]: row[i] for i in range(len(cols))}
             else:
                 result["antispam"] = {"enabled": False}
+
+            # nsfw
+            await cur.execute("SELECT enabled, penalty, threshold_val FROM group_nsfw WHERE chat_id=%s", (chat_id,))
+            row = await cur.fetchone()
+            result["nsfw"] = {"enabled": bool(row[0]) if row else False, "penalty": row[1] if row else "delete", "threshold": float(row[2]) if row and row[2] else 0.8}
 
             # subscriptions
             await cur.execute("SELECT feature, expires_at FROM group_subscriptions WHERE chat_id=%s AND expires_at > NOW()", (chat_id,))
@@ -227,4 +233,25 @@ async def update_group_permission(chat_id: int, data: PermissionUpdate, db: str 
             await cur.execute("""INSERT INTO group_permission (chat_id, permissions) VALUES (%s, %s)
                 ON DUPLICATE KEY UPDATE permissions=VALUES(permissions)""",
                 (chat_id, data.permissions))
+    return {"ok": True}
+
+# ── NSFW detection settings ───────────────────────────
+from pydantic import BaseModel
+
+class NsfwUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    penalty: Optional[str] = None
+    threshold: Optional[float] = None
+
+@router.put("/groups/{chat_id}/nsfw")
+async def update_group_nsfw(chat_id: int, data: NsfwUpdate, db: str = "", admin=Depends(get_current_admin)):
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not updates: return {"ok": True}
+    # map 'threshold' to 'threshold_val' DB column
+    if "threshold" in updates:
+        updates["threshold_val"] = updates.pop("threshold")
+    from database import update_generic
+    pool = await resolve_data_pool(db)
+    async with pool.acquire() as conn:
+        await update_generic(chat_id, "group_nsfw", updates)(conn)
     return {"ok": True}

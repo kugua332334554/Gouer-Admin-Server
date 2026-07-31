@@ -114,33 +114,156 @@ async def bot_log(bot_id: int, tail: int = 100, admin=Depends(get_current_admin)
     with open(log_file, "r") as f:
         return {"lines": [l.rstrip() for l in f.readlines()[-tail:]]}
 
+# ── Helpers ────────────────────────────────────────────
+import time
+
+def _find_bot_pids():
+    """Scan ps for all running bot processes (main + children)."""
+    pids = []
+    try:
+        for line in subprocess.run(["ps", "aux"], capture_output=True, text=True).stdout.split("\n"):
+            if "grep" not in line and "Admin/bot/main.py" in line:
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        pids.append(int(parts[1]))
+                    except ValueError:
+                        pass
+    except Exception:
+        pass
+    return pids
+
+
+def _kill_process_tree(pid: int, sig: int):
+    """Send signal to a process and all its children."""
+    try:
+        # kill child processes first
+        for line in subprocess.run(
+            ["ps", "-o", "pid", "--ppid", str(pid), "--no-headers"],
+            capture_output=True, text=True
+        ).stdout.strip().split("\n"):
+            try:
+                child_pid = int(line.strip())
+                _kill_process_tree(child_pid, sig)  # recurse
+            except (ValueError, Exception):
+                pass
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        pass  # already dead
+
+
+def _hard_kill_all():
+    """Aggressive fallback: kill all bot-related processes by path pattern."""
+    for sig in [signal.SIGTERM, signal.SIGKILL]:
+        try:
+            subprocess.run(
+                ["pkill", f"-{int(sig)}", "-f", "Admin/bot/main.py"],
+                timeout=5
+            )
+        except Exception:
+            pass
+
+
 # ── Start / Stop / Restart ─────────────────────────────
 @router.post("/bots/start-all")
 async def start_all_bots(admin=Depends(get_current_admin)):
     if not _BOT_MAIN or not os.path.isfile(_BOT_MAIN):
-        raise HTTPException(status_code=400, detail="Bot 目录未配置")
+        raise HTTPException(status_code=400, detail=f"Bot 入口不存在: {_BOT_MAIN}")
+
+    # check if already running
+    existing = _find_bot_pids()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Bot 已在运行 (PID: {existing})，请先执行「关闭」再启动"
+        )
+
     log_f = open("/var/log/gouer_main_bot.log", "a")
-    p = subprocess.Popen([_BOT_PYTHON, _BOT_MAIN], cwd=_BOT_DIR,
-                         stdout=log_f, stderr=log_f, start_new_session=True)
+    env = os.environ.copy()
+
+    p = subprocess.Popen(
+        [_BOT_PYTHON, _BOT_MAIN],
+        cwd=_BOT_DIR,
+        stdout=log_f,
+        stderr=log_f,
+        start_new_session=True,
+        env=env
+    )
     _bot_processes["main"] = p
+
+    # verify it actually started
+    await asyncio.sleep(3)
+    exit_code = p.poll()
+    if exit_code is not None:
+        log_f.close()
+        tail_lines = ""
+        try:
+            with open("/var/log/gouer_main_bot.log") as lf:
+                tail_lines = "".join(lf.readlines()[-15:])
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=500,
+            detail=f"Bot 启动失败（退出码 {exit_code}）：\n{tail_lines}"
+        )
+
     return {"started": [{"name": "main", "pid": p.pid}]}
+
 
 @router.post("/bots/stop-all")
 async def stop_all_bots(admin=Depends(get_current_admin)):
     stopped = []
+    failed = []
+
+    # Phase 1: kill tracked in-memory processes
     for name, p in list(_bot_processes.items()):
         try:
             os.killpg(os.getpgid(p.pid), signal.SIGTERM)
             stopped.append({"name": name, "pid": p.pid})
-        except: pass
+        except Exception:
+            pass
     _bot_processes.clear()
-    # kill any stragglers
-    try: subprocess.run(["pkill", "-f", f"{_BOT_DIR}/main.py"], timeout=5)
-    except: pass
-    return {"stopped": stopped}
+
+    # Phase 2: ps scan — find ALL bot processes (not just tracked ones)
+    all_pids = _find_bot_pids()
+    for pid in all_pids:
+        try:
+            _kill_process_tree(pid, signal.SIGTERM)
+            stopped.append({"name": "scanned", "pid": pid})
+        except Exception:
+            failed.append({"pid": pid})
+
+    # Phase 3: wait, then SIGKILL survivors
+    await asyncio.sleep(3)
+    survivors = _find_bot_pids()
+    for pid in survivors:
+        try:
+            _kill_process_tree(pid, signal.SIGKILL)
+            stopped.append({"name": "force-killed", "pid": pid})
+        except Exception:
+            failed.append({"pid": pid})
+
+    # Phase 4: final pkill sweep (terminate then kill)
+    _hard_kill_all()
+
+    # Phase 5: reset PIDs in database
+    try:
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("UPDATE bot_tokens SET pid=0 WHERE pid>0")
+    except Exception:
+        pass
+
+    return {
+        "stopped": stopped,
+        "failed": failed,
+        "survivors": _find_bot_pids()  # should be empty
+    }
+
 
 @router.post("/bots/restart-all")
 async def restart_all_bots(admin=Depends(get_current_admin)):
     await stop_all_bots(admin=admin)
-    await asyncio.sleep(2)
+    await asyncio.sleep(4)  # extra wait for ports/sockets to release
     return await start_all_bots(admin=admin)

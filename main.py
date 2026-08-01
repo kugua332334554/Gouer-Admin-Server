@@ -60,7 +60,7 @@ async def health_check():
 mimetypes.add_type("application/javascript", ".js")
 mimetypes.add_type("text/css", ".css")
 
-_static_dir = os.path.join(os.path.dirname(__file__), "..", "admin_frontend", "dist")
+_static_dir = os.getenv("BOT_FT", os.path.join(os.path.dirname(__file__), "..", "admin_frontend", "dist"))
 _admin_path = OBF["admin_path"]
 
 def _fix_and_inject(html_content: str) -> str:
@@ -99,8 +99,9 @@ async def _startup_clean():
     import signal as _sig
     import subprocess as _sp
     killed = 0
+    _bot_dir = os.getenv("BOT_DIR", "")
     for proc in _sp.run(["ps", "aux"], capture_output=True, text=True).stdout.split("\n"):
-        if "Admin/bot/main.py" in proc and "grep" not in proc:
+        if _bot_dir and f"{_bot_dir}/main.py" in proc and "grep" not in proc:
             try:
                 pid = int(proc.split()[1])
                 os.kill(pid, _sig.SIGTERM)
@@ -138,7 +139,9 @@ if __name__ == "__main__":
         save_env("ADMIN_2FA_SECRET", _current_2fa_secret)
         os.environ["ADMIN_2FA_SECRET"] = _current_2fa_secret
 
-    print(f"\n  GouerAdmin v2.0  |  Port: {port}  |  2FA: {_current_2fa_secret}\n")
+    print(f"\n  GouerAdmin v2.0  |  Port: {port}  |  2FA: {_current_2fa_secret}")
+    print(f"  后台地址: http://服务器IP:{port}{_OBF['admin_path']}/")
+    print()
 
     # startup cleanup
     loop = asyncio.new_event_loop()

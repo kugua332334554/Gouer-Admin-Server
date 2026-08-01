@@ -122,7 +122,7 @@ def _find_bot_pids():
     pids = []
     try:
         for line in subprocess.run(["ps", "aux"], capture_output=True, text=True).stdout.split("\n"):
-            if "grep" not in line and "Admin/bot/main.py" in line:
+            if "grep" not in line and _BOT_MAIN and _BOT_MAIN in line:
                 parts = line.split()
                 if len(parts) >= 2:
                     try:
@@ -157,7 +157,7 @@ def _hard_kill_all():
     for sig in [signal.SIGTERM, signal.SIGKILL]:
         try:
             subprocess.run(
-                ["pkill", f"-{int(sig)}", "-f", "Admin/bot/main.py"],
+                ["pkill", f"-{int(sig)}", "-f", _BOT_MAIN],
                 timeout=5
             )
         except Exception:

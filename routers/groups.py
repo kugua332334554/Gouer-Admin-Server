@@ -42,9 +42,9 @@ async def get_group_detail(chat_id: int, db: str = "", admin=Depends(get_current
             result["title"], result["username"], result["type"], result["created_at"] = row[0], row[1], row[2], str(row[3])
 
             # verify settings
-            await cur.execute("SELECT verify_status, verify_mode, verify_duration, verify_penalty FROM group_settings WHERE chat_id=%s", (chat_id,))
+            await cur.execute("SELECT verify_status, verify_mode, verify_duration, verify_penalty, block_blacklist_join FROM group_settings WHERE chat_id=%s", (chat_id,))
             row = await cur.fetchone()
-            result["verify"] = {"status": bool(row[0]), "mode": row[1], "duration": row[2], "penalty": row[3]} if row else {"status": False, "mode": "button", "duration": 1, "penalty": "mute"}
+            result["verify"] = {"status": bool(row[0]), "mode": row[1], "duration": row[2], "penalty": row[3], "block_blacklist": bool(row[4])} if row else {"status": False, "mode": "button", "duration": 1, "penalty": "mute", "block_blacklist": False}
 
             # welcome
             await cur.execute("SELECT status, delete_time, delete_last, media_type, welcome_text, buttons_text FROM group_welcome WHERE chat_id=%s", (chat_id,))
@@ -156,10 +156,10 @@ async def update_group_verify(chat_id: int, data: GroupVerifyUpdate, db: str = "
     pool = await resolve_data_pool(db)
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            await cur.execute("""INSERT INTO group_settings (chat_id, verify_status, verify_mode, verify_duration, verify_penalty)
-                VALUES (%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE verify_status=VALUES(verify_status),
-                verify_mode=VALUES(verify_mode), verify_duration=VALUES(verify_duration), verify_penalty=VALUES(verify_penalty)""",
-                (chat_id, data.verify_status, data.verify_mode, data.verify_duration, data.verify_penalty))
+            await cur.execute("""INSERT INTO group_settings (chat_id, verify_status, verify_mode, verify_duration, verify_penalty, block_blacklist_join)
+                VALUES (%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE verify_status=VALUES(verify_status),
+                verify_mode=VALUES(verify_mode), verify_duration=VALUES(verify_duration), verify_penalty=VALUES(verify_penalty), block_blacklist_join=VALUES(block_blacklist_join)""",
+                (chat_id, data.verify_status, data.verify_mode, data.verify_duration, data.verify_penalty, data.block_blacklist))
     return {"ok": True}
 
 @router.put("/groups/{chat_id}/welcome")

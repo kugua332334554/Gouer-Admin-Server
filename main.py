@@ -29,7 +29,7 @@ app.middleware("http")(rate_limit_middleware)
 # ── Register all routers ──────────────────────────────
 from routers import (dashboard, groups, channels, dingshi, weijinci, keyword_reply,
                      kuaisufabu, lotteries, users, points, subscriptions,
-                     bot_tokens, bots, db_manager, code_editor, system, shop)
+                     bot_tokens, bots, db_manager, code_editor, system, shop, blacklist, fortune)
 from auth import router as auth_router
 
 app.include_router(auth_router, prefix=PREFIX)
@@ -50,6 +50,8 @@ app.include_router(db_manager.router, prefix=PREFIX)
 app.include_router(code_editor.router, prefix=PREFIX)
 app.include_router(system.router, prefix=PREFIX)
 app.include_router(shop.router, prefix=PREFIX)
+app.include_router(blacklist.router, prefix=PREFIX)
+app.include_router(fortune.router, prefix=PREFIX)
 
 # ── Health check ───────────────────────────────────────
 @app.get(OBF["health_path"])

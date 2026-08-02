@@ -34,6 +34,12 @@ class GroupVerifyUpdate(BaseModel):
     verify_mode: Optional[str] = None
     verify_duration: Optional[int] = None
     verify_penalty: Optional[str] = None
+    block_blacklist: Optional[bool] = None
+
+class BlacklistCreate(BaseModel):
+    user_id: int
+    username: str = ""
+    reason: str = ""
 
 class WelcomeSettingsUpdate(BaseModel):
     status: Optional[bool] = None
@@ -129,6 +135,11 @@ class KeywordCreate(BaseModel):
     penalty: str = "delete"
     mute_duration: int = 3600
     status: bool = True
+
+class FortuneCreate(BaseModel):
+    sign: str
+    poem: str
+    reading: str = ""
 
 class KeywordReplyCreate(BaseModel):
     chat_id: int

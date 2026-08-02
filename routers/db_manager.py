@@ -98,29 +98,48 @@ async def db_query(req: DBQueryRequest, admin=Depends(get_current_admin)):
         data.append(row_dict)
     return {"columns": cols, "rows": data, "count": len(data)}
 
-# ── DB Backup ──────────────────────────────────────────
+# ── DB Backup (全库备份: 主库 + 所有克隆子 Bot 库) ─────────────────────
+_SKIP_DB = {"information_schema", "performance_schema", "mysql", "sys"}
+
+
 @router.get("/db/backup")
 async def db_backup(admin=Depends(get_current_admin)):
     pool = await get_db_pool()
-    sql_lines = ["-- GouerAdmin Database Backup", f"-- {datetime.now()}", ""]
+    sql_lines = ["-- GouerAdmin Database Backup (all databases)", f"-- {datetime.now()}", ""]
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            await cur.execute("SHOW TABLES")
-            tables = [r[0] for r in await cur.fetchall()]
-            for table in tables:
-                await cur.execute(f"SELECT * FROM `{validate_table_name(table)}`")
-                rows = await cur.fetchall()
-                cols = [d[0] for d in cur.description]
-                if not rows: continue
-                sql_lines.append(f"\n-- Table: {table}")
-                col_names = ", ".join(f"`{c}`" for c in cols)
-                for row in rows:
-                    vals = []
-                    for v in row:
-                        if v is None: vals.append("NULL")
-                        elif isinstance(v, (int, float)): vals.append(str(v))
-                        else: vals.append("'" + str(v).replace("\\", "\\\\").replace("'", "\\'") + "'")
-                    sql_lines.append(f"INSERT INTO `{table}` ({col_names}) VALUES ({', '.join(vals)});")
+            await cur.execute("SHOW DATABASES")
+            dbs = [r[0] for r in await cur.fetchall() if r[0] not in _SKIP_DB]
+            for dbname in sorted(dbs):
+                db = validate_table_name(dbname)
+                sql_lines.append(f"\n\n-- ==================== DATABASE: {dbname} ====================")
+                sql_lines.append(f"CREATE DATABASE IF NOT EXISTS `{db}` DEFAULT CHARSET=utf8mb4;")
+                sql_lines.append(f"USE `{db}`;")
+                await cur.execute(f"SHOW TABLES FROM `{db}`")
+                tables = [r[0] for r in await cur.fetchall()]
+                for table in tables:
+                    tname = validate_table_name(table)
+                    try:
+                        await cur.execute(f"SHOW CREATE TABLE `{db}`.`{tname}`")
+                        row = await cur.fetchone()
+                        if row:
+                            sql_lines.append(f"\n-- Table: {tname}")
+                            sql_lines.append(str(row[1]) + ";")
+                        await cur.execute(f"SELECT * FROM `{db}`.`{tname}`")
+                        rows = await cur.fetchall()
+                        cols = [d[0] for d in cur.description]
+                        if not rows:
+                            continue
+                        col_names = ", ".join(f"`{c}`" for c in cols)
+                        for row in rows:
+                            vals = []
+                            for v in row:
+                                if v is None: vals.append("NULL")
+                                elif isinstance(v, (int, float)): vals.append(str(v))
+                                else: vals.append("'" + str(v).replace("\\", "\\\\").replace("'", "\\'") + "'")
+                            sql_lines.append(f"INSERT INTO `{tname}` ({col_names}) VALUES ({', '.join(vals)});")
+                    except Exception as e:
+                        sql_lines.append(f"-- ERROR dumping {dbname}.{table}: {e}")
     sql = "\n".join(sql_lines)
     return Response(content=sql, media_type="application/sql",
                     headers={"Content-Disposition": f"attachment; filename=gouer_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sql"})
